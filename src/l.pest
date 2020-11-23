@@ -1,0 +1,18 @@
+program = { SOI ~ statement+ ~ EOI }
+
+lam = _{ "λ"|"lam" }
+ignore = @{ "_" }
+WHITESPACE = _{ " " | NEWLINE | "\t" }
+
+ident = @{ ASCII_ALPHANUMERIC ~ ( ASCII_ALPHANUMERIC | "_" )* }
+
+pat = ${ ( ident ~ (" " ~ ( ident | ignore ) )* ) | ignore }
+match_branch = { "|" ~ pat ~ "=>" ~ expr }
+mat = { "match" ~ expr ~ match_branch+ }
+abs = { lam ~ ident ~ "." ~ expr }
+app = ${ "(" ~ expr ~ (" " ~ expr)+ ~ ")" }
+expr = _{ app | mat | abs | ident }
+
+named_func = { "def" ~ ident ~ ":=" ~ expr }
+const_def = { "const" ~ ":" ~ ident ~ ( "," ~ ident )* }
+statement = { named_func | const_def }
