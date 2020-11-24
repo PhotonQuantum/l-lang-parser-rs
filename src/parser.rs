@@ -11,7 +11,7 @@ pub struct LParser;
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Program {
-    stmts: Vec<Stmt>
+    pub stmts: Vec<Stmt>
 }
 
 #[derive(PartialEq, Debug, Clone)]
