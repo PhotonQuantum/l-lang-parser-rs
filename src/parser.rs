@@ -4,6 +4,9 @@ use pest::Parser;
 use self::Expr::*;
 use self::Pat::*;
 use self::Stmt::*;
+use std::fmt;
+use std::fmt::{Display, Formatter};
+use std::iter::repeat;
 
 #[derive(Parser)]
 #[grammar = "l.pest"]
@@ -18,6 +21,17 @@ pub struct Program {
 pub struct CtorDef {
     pub ident: String,
     pub argc: usize,
+}
+
+impl Display for CtorDef {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let args:Vec<_> = repeat("_").take(self.argc).collect();
+        if args.len() > 0 {
+            write!(f, "({} {})", self.ident, args.join(" "))
+        } else {
+            write!(f, "{}", self.ident)
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]

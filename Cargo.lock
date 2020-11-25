@@ -157,6 +157,7 @@ dependencies = [
 name = "toy_lang_parser_rs"
 version = "0.1.0"
 dependencies = [
+ "maplit",
  "pest",
  "pest_derive",
 ]

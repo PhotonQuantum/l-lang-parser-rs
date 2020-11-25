@@ -1,7 +1,6 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::hash::Hash;
 use std::iter::{repeat, FromIterator};
 
 use crate::parser::*;
@@ -26,7 +25,7 @@ impl Rho {
     fn with_vars(&self, vars: &HashSet<String>) -> Rho {
         let var_symbols: HashMap<String, Symbol> =
             vars.iter().map(|var| (var.clone(), Symbol::Var)).collect();
-        self.with(&var_symbols)
+        self.with(&var_symbols, true)
     }
 
     fn with_funcs(&self, funcs: &HashSet<String>) -> Rho {
@@ -34,14 +33,16 @@ impl Rho {
             .iter()
             .map(|var| (var.clone(), Symbol::Func))
             .collect();
-        self.with(&func_symbols)
+        self.with(&func_symbols, false)
     }
 
-    fn with(&self, symbols: &HashMap<String, Symbol>) -> Rho {
-        let self_symbol_set: HashSet<_> = HashSet::from_iter(self.symbols.keys());
-        let other_symbol_set: HashSet<_> = HashSet::from_iter(symbols.keys());
-        if !self_symbol_set.is_disjoint(&other_symbol_set) {
-            panic!("conflict symbols")
+    fn with(&self, symbols: &HashMap<String, Symbol>, allow_overwrite: bool) -> Rho {
+        if !allow_overwrite {
+            let self_symbol_set: HashSet<_> = HashSet::from_iter(self.symbols.keys());
+            let other_symbol_set: HashSet<_> = HashSet::from_iter(symbols.keys());
+            if !self_symbol_set.is_disjoint(&other_symbol_set) {
+                panic!("conflict symbols")
+            }
         }
 
         let mut self_symbols = self.symbols.clone();
@@ -70,6 +71,25 @@ impl Rho {
             .filter_map(|group| group.into_iter().filter(|ctor| ctor.ident == ident).next())
             .next()
             .cloned()
+    }
+
+    fn list_funcs(&self) -> impl Iterator<Item = String> + '_ {
+        self.symbols
+            .iter()
+            .filter(|x| x.1 == &Symbol::Func)
+            .map(|x| x.0.clone())
+    }
+    fn list_vars(&self) -> impl Iterator<Item = String> + '_ {
+        self.symbols
+            .iter()
+            .filter(|x| x.1 == &Symbol::Var)
+            .map(|x| x.0.clone())
+    }
+    fn list_consts(&self) -> impl Iterator<Item = String> + '_ {
+        self.symbols
+            .iter()
+            .filter(|x| x.1 == &Symbol::Const)
+            .map(|x| x.0.clone())
     }
 }
 
@@ -209,165 +229,243 @@ fn indent(input_str: &str) -> String {
         .into_iter()
         .map(|x| format!("  {}", x))
         .fold_first(|x, y| format!("{}\n{}", x, y))
-        .unwrap()
+        .unwrap_or(String::new())
 }
 
-pub fn transpile(input_program: Program) -> CoqProgram {
-    CoqProgram {
+pub fn transpile(input_program: Program) -> Result<CoqProgram, String> {
+    Ok(CoqProgram {
         stmts: input_program
             .stmts
             .iter()
-            .fold(
+            .try_fold::<_, _, Result<_, String>>(
                 (
                     Vec::<CoqStmt>::new(),
-                    extract_base_rho(&input_program.stmts),
+                    extract_base_rho(&input_program.stmts)?,
                 ),
-                |(coq_stmts, rho), stmt| match stmt {
-                    Stmt::NamedFunc { name, expr } => (
-                        [
-                            coq_stmts.as_slice(),
-                            &[Definition {
-                                name: name.clone(),
-                                expr: Box::new(transpile_expr(*expr.clone(), &rho)),
-                            }],
-                        ]
-                        .concat(),
-                        rho.with_funcs(&HashSet::from_iter(vec![name.clone()])),
-                    ),
-                    Stmt::RecFunc { name, expr } => (
-                        [
-                            coq_stmts.as_slice(),
-                            &[Definition {
-                                name: name.clone(),
-                                expr: Box::new(Rec(Box::new(transpile_expr(*expr.clone(), &rho)))),
-                            }],
-                        ]
-                        .concat(),
-                        rho.with_funcs(&HashSet::from_iter(vec![name.clone()])),
-                    ),
-                    _ => (coq_stmts, rho),
+                |(coq_stmts, rho), stmt| {
+                    Ok(match stmt {
+                        Stmt::NamedFunc { name, expr } => (
+                            [
+                                coq_stmts.as_slice(),
+                                &[Definition {
+                                    name: name.clone(),
+                                    expr: Box::new(transpile_expr(*expr.clone(), &rho)?),
+                                }],
+                            ]
+                            .concat(),
+                            rho.with_funcs(&HashSet::from_iter(vec![name.clone()])),
+                        ),
+                        Stmt::RecFunc { name, expr } => (
+                            [
+                                coq_stmts.as_slice(),
+                                &[Definition {
+                                    name: name.clone(),
+                                    expr: Box::new(Rec(Box::new(transpile_expr(
+                                        *expr.clone(),
+                                        &rho,
+                                    )?))),
+                                }],
+                            ]
+                            .concat(),
+                            rho.with_funcs(&HashSet::from_iter(vec![name.clone()])),
+                        ),
+                        _ => (coq_stmts, rho),
+                    })
                 },
-            )
+            )?
             .0,
-    }
+    })
 }
 
-fn transpile_expr(expr: Expr, rho: &Rho) -> CoqExpr {
-    match expr {
+fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
+    Ok(match expr {
         Expr::App(exprs) => App(exprs
             .into_iter()
-            .map(|x| Box::new(transpile_expr(*x, rho)))
-            .collect()),
+            .map(|x| Ok(Box::new(transpile_expr(*x, rho)?)))
+            .collect::<Result<Vec<_>, String>>()?),
         Expr::Mat {
             expr: pat,
             branches,
         } => Mat {
-            expr: Box::new(transpile_expr(*pat, &rho)),
-            branches: transpile_match_branches(branches, rho),
+            expr: Box::new(transpile_expr(*pat, &rho)?),
+            branches: transpile_match_branches(branches, rho)?,
         },
         Expr::Abs { var, expr } => Abs {
             var: var.clone(),
             expr: Box::new(transpile_expr(
                 *expr,
                 &rho.with_vars(&HashSet::from_iter(vec![var.clone()])),
-            )),
+            )?),
         },
         Expr::Ident(s) => {
-            match rho
-                .find_symbol(&s)
-                .expect(format!("missing symbol: {}", s).as_str())
-            {
+            match rho.find_symbol(&s).ok_or(format!(
+                "Missing symbol: \"{}\".\nAvailable symbols in scope: {:#?}",
+                s, rho.symbols
+            ))? {
                 Symbol::Const => Const(s),
                 Symbol::Var => Var(s),
                 Symbol::Func => CoqObj(s),
             }
         }
-    }
+    })
 }
 
 fn transpile_match_branches(
     branches: Vec<Box<MatchBranch>>,
     rho: &Rho,
-) -> Vec<Box<CoqMatchBranch>> {
-    let mut matched_ctors: HashSet<CtorDef> = HashSet::new();
-    let mut coq_branches: Vec<Box<CoqMatchBranch>> = vec![];
-    for branch in branches {
-        let pat = branch.pat;
-        let expr = branch.expr;
-        match pat {
-            Pat::Constructor { ctor: ident, args } => {
-                let ctor = rho.find_ctor(&ident).expect("no matched ctor");
-                if matched_ctors.contains(&ctor) {
-                    panic!("duplicate match branch")
-                }
-                matched_ctors.insert(ctor.clone());
-
-                coq_branches.push(Box::new(CoqMatchBranch {
-                    pat: CoqPat {
-                        ctor: ctor.ident,
-                        args: args.clone(),
-                    },
-                    expr: Box::new(transpile_expr(
-                        *expr,
-                        &rho.with_vars(&HashSet::from_iter(args)),
-                    )),
-                }));
-            }
-            Pat::Ignore => {
-                let matched_consts = rho
-                    .find_ctor_group(&matched_ctors)
-                    .expect("unable to match a set of consts");
-                let mut current_matched_ctors: HashSet<CtorDef> = HashSet::new();
-                {
-                    let remaining_ctors: HashSet<_> =
-                        matched_consts.difference(&matched_ctors).collect();
-                    if remaining_ctors.is_empty() {
-                        panic!("nothing to match.")
+) -> Result<Vec<Box<CoqMatchBranch>>, String> {
+    branches
+        .into_iter()
+        .try_fold(
+            (Vec::<Box<CoqMatchBranch>>::new(), HashSet::<CtorDef>::new()),
+            |(coq_branches, matched_ctors), branch| {
+                let MatchBranch { pat, expr } = *branch;
+                match pat {
+                    Pat::Constructor { ctor: ident, args } => {
+                        let ctor = rho.find_ctor(&ident).ok_or(format!(
+                            "No matched const.\nExpected: one of [{}]\nGot: \"{}\"",
+                            rho.list_consts()
+                                .map(|x| format!("\"{}\"", x))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            ident
+                        ))?;
+                        if matched_ctors.contains(&ctor) {
+                            if args.len() > 0 {
+                                Err(format!(
+                                    "Duplicate match branch: ({} {}).\nMatched ctor: {}",
+                                    ident,
+                                    args.join(" "),
+                                    ctor
+                                ))
+                            } else {
+                                Err(format!(
+                                    "Duplicate match branch: {}.\nMatched ctor: {}",
+                                    ident, ctor
+                                ))
+                            }
+                        } else {
+                            Ok((
+                                [
+                                    coq_branches.as_slice(),
+                                    &[Box::new(CoqMatchBranch {
+                                        pat: CoqPat {
+                                            ctor: ctor.ident.clone(),
+                                            args: args.clone(),
+                                        },
+                                        expr: Box::new(transpile_expr(
+                                            *expr,
+                                            &rho.with_vars(&HashSet::from_iter(args)),
+                                        )?),
+                                    })],
+                                ]
+                                .concat(),
+                                matched_ctors.union(&hashset!{ctor}).cloned().collect()
+                            ))
+                        }
                     }
-
-                    for ctor in remaining_ctors {
-                        current_matched_ctors.insert(ctor.clone());
-                        coq_branches.push(Box::new(CoqMatchBranch {
-                            pat: CoqPat {
-                                ctor: ctor.ident.clone(),
-                                args: repeat(String::from("_")).take(ctor.argc).collect(),
-                            },
-                            expr: Box::new(transpile_expr(*expr.clone(), rho)),
-                        }))
+                    Pat::Ignore => {
+                        let matched_consts = rho.find_ctor_group(&matched_ctors).ok_or(format!(
+                            "Unable to autofill consts.\nReason: failed to matching const group.\nExpected: a subset of one of {{\n{}\n}}\nGot: [{}]",
+                            indent(&rho.ctors.iter().map(|group| group
+                                .iter()
+                                .map(|ctor| ctor.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "))
+                                .map(|x|format!("[{}]", x))
+                                .collect::<Vec<_>>()
+                                .join(",\n")),
+                            matched_ctors
+                                .iter()
+                                .map(|x| x.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))?;
+                        let remaining_ctors: HashSet<_> =
+                            matched_consts.difference(&matched_ctors).collect();
+                        if remaining_ctors.is_empty() {
+                            Err(format!("Unable to autofill consts.\nReason: current match is already exhausted.\nCurrent match: [{}]", matched_consts.iter().map(|ctor|ctor.to_string()).collect::<Vec<_>>().join(", ")))
+                        } else {
+                            let (new_branches, current_matched_ctors) = remaining_ctors
+                                .into_iter()
+                                .try_fold::<_, _, Result<_, String>>(
+                                    (Vec::<Box<CoqMatchBranch>>::new(), HashSet::<CtorDef>::new()),
+                                    |(current_coq_branches, current_matched_ctors), ctor|
+                                        Ok((
+                                            [
+                                                current_coq_branches.as_slice(),
+                                                &[Box::new(CoqMatchBranch {
+                                                    pat: CoqPat {
+                                                        ctor: ctor.ident.clone(),
+                                                        args: repeat(String::from("_"))
+                                                            .take(ctor.argc)
+                                                            .collect(),
+                                                    },
+                                                    expr: Box::new(transpile_expr(
+                                                        *expr.clone(),
+                                                        rho,
+                                                    )?),
+                                                })],
+                                            ]
+                                            .concat(),
+                                            current_matched_ctors.union(&hashset!{ctor.clone()}).cloned().collect(),
+                                        ))
+                                    ,
+                                )?;
+                            Ok((
+                                [coq_branches.as_slice(), new_branches.as_slice()].concat(),
+                                HashSet::from(
+                                    matched_ctors
+                                        .union(&current_matched_ctors)
+                                        .cloned()
+                                        .collect(),
+                                ),
+                            ))
+                        }
                     }
                 }
-                matched_ctors = HashSet::from(
-                    matched_ctors
-                        .union(&current_matched_ctors)
-                        .cloned()
-                        .collect(),
-                );
-            }
-        }
-    }
-    coq_branches
+            },
+        )
+        .and_then(|x| Ok(x.0))
 }
 
-fn extract_base_rho(stmts: &Vec<Stmt>) -> Rho {
-    let mut const_groups: Vec<HashSet<CtorDef>> = vec![];
-    let mut symbols: HashMap<String, Symbol> = HashMap::new();
-    stmts.iter().for_each(|stmt| match stmt {
-        Stmt::ConstDef(consts) => {
-            let mut group: HashSet<CtorDef> = HashSet::new();
-            consts.iter().for_each(|c| {
-                if symbols.contains_key(&c.ident) {
-                    panic!("duplicate const declaration")
-                }
-                symbols.insert(c.ident.clone(), Symbol::Const);
-                group.insert(c.clone());
-            });
-            const_groups.push(group);
-        }
-        _ => (),
-    });
+fn extract_base_rho(stmts: &Vec<Stmt>) -> Result<Rho, String> {
+    let (const_groups, symbols) = stmts.iter().try_fold::<_, _, Result<_, String>>(
+        (
+            Vec::<HashSet<CtorDef>>::new(),
+            HashMap::<String, Symbol>::new(),
+        ),
+        |(const_groups, symbols), stmt| {
+            let (group, new_symbols) = match stmt {
+                Stmt::ConstDef(consts) => consts.iter().try_fold(
+                    (HashSet::<CtorDef>::new(), HashMap::<String, Symbol>::new()),
+                    |(group, new_symbols), ctor| {
+                        if symbols.contains_key(&ctor.ident)
+                            || new_symbols.contains_key(&ctor.ident)
+                        {
+                            Err(format!("Duplicate const declaration: {}", ctor))
+                        } else {
+                            Ok((
+                                group.union(&hashset! {ctor.clone()}).cloned().collect(),
+                                new_symbols
+                                    .into_iter()
+                                    .chain(hashmap! {ctor.ident.clone()=>Symbol::Const})
+                                    .collect(),
+                            ))
+                        }
+                    },
+                )?,
+                _ => (hashset! {}, hashmap! {}),
+            };
+            Ok((
+                [const_groups.as_slice(), &[group]].concat(),
+                symbols.into_iter().chain(new_symbols).collect(),
+            ))
+        },
+    )?;
 
-    Rho {
+    Ok(Rho {
         symbols,
         ctors: const_groups,
-    }
+    })
 }

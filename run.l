@@ -4,7 +4,7 @@ def z_comb_ := λf.(λx.(f λv.(x x v)) λx.(f λv.(x x v)))
 def gen_evenb := λf.λn.
     match n
     | S x => match x
-            | S y => (f y)
+            | S x => (f x)
             | O => false
             end
     | O => true
