@@ -81,12 +81,8 @@ pub struct CoqPat {
 impl Display for CoqPat {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let arg_strs: Vec<String> = self.args.iter().map(|e| e.to_string()).collect();
-        if arg_strs.is_empty() {
-            write!(f, "\"{}\", []", self.ctor)
-        } else {
-            let arg_output = arg_strs.into_iter().fold_first(|x, y| format!("\"{}\"; \"{}\"", x, y)).unwrap();
-            write!(f, "\"{}\", [{}]", self.ctor, arg_output)
-        }
+        let arg_output = arg_strs.into_iter().map(|x|format!("\"{}\"", x)).fold_first(|x, y| format!("{}; {}", x, y)).unwrap_or(String::from(""));
+        write!(f, "\"{}\", [{}]", self.ctor, arg_output)
     }
 }
 
