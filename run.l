@@ -6,7 +6,9 @@ def gen_evenb := λf.λn.
     | S x => match x
             | S y => (f y)
             | O => false
+            end
     | O => true
+    end
 def my_evenb := (z_comb_ gen_evenb)
 def test_func := (my_evenb (S (S (S O))))
 def test_func2 := (my_evenb (S (S (S (S O)))))
