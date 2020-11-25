@@ -1,17 +1,12 @@
-const: (abs _ _), (app _ _), (const _), (var _)
-const: Some, None
-const: true, false
-const: nil
 const: (S _), O
-def my_func := lam t.match t
-| abs _ _ => true
-| _ => match (is_const_hd_val t)
-       | Some _ => true
-       | _ => false
-def y_comb := λf.(λx.(f (x x)) λx.(f (x x)))
-def run := (y_comb gen_run)
-rec my_prec := λn.
+const: true, false
+def z_comb_ := λf.(λx.(f λv.(x x v)) λx.(f λv.(x x v)))
+def gen_evenb := λf.λn.
     match n
-    | S x => x
-    | O => O
-def test_func := (my_prec (S (S (S O))))
+    | S x => match x
+            | S y => (f y)
+            | O => false
+    | O => true
+def my_evenb := (z_comb_ gen_evenb)
+def test_func := (my_evenb (S (S (S O))))
+def test_func2 := (my_evenb (S (S (S (S O)))))

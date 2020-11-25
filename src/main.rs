@@ -2,10 +2,10 @@
 #[macro_use]
 extern crate pest_derive;
 
-use std::fs::File;
-use std::io::Read;
 use crate::parser::parse;
 use crate::transpiler::transpile;
+use std::fs::File;
+use std::io::Read;
 
 mod parser;
 mod transpiler;
