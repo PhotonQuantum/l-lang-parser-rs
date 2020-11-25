@@ -14,10 +14,16 @@ pub struct Program {
     pub stmts: Vec<Stmt>
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Hash)]
+pub struct CtorDef {
+    pub ident: String,
+    pub argc: usize
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum Stmt {
     NamedFunc { name: String, expr: Box<Expr> },
-    ConstDef(Vec<String>),
+    ConstDef(Vec<CtorDef>),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -81,13 +87,20 @@ pub fn parse_stmt(pair: pest::iterators::Pair<Rule>) -> Stmt {
             NamedFunc { name: name.as_str().to_string(), expr: Box::new(parse_expr(expr)) }
         }
         Rule::const_def => {
-            let consts: Vec<String> = pair.into_inner().map(|x| x.as_str().to_string()).collect();
+            let consts: Vec<CtorDef> = pair.into_inner().map(|x| parse_ctor_def(x)).collect();
             ConstDef(consts)
         }
         _ => {
             panic!("unexpected token when parsing stmt: {}", pair.as_str())
         }
     }
+}
+
+pub fn parse_ctor_def(pair: pest::iterators::Pair<Rule>) -> CtorDef {
+    let mut pair = pair.into_inner();
+    let ident = pair.next().unwrap().as_str().to_string();
+    let argc = pair.count();
+    CtorDef{ ident, argc }
 }
 
 pub fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {

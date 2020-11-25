@@ -1,4 +1,4 @@
-const: abs, app, const, var
+const: (abs _ _), (app _ _), (const _), (var _)
 const: Some, None
 const: nil
 def my_func := lam t.match t

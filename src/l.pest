@@ -13,6 +13,7 @@ abs = { lam ~ ident ~ "." ~ expr }
 app = ${ "(" ~ expr ~ (" " ~ expr)+ ~ ")" }
 expr = _{ app | mat | abs | ident }
 
+ctor_def = ${ ident | "(" ~ ident ~ (" " ~ ignore)+ ~ ")" }
 named_func = { "def" ~ ident ~ ":=" ~ expr }
-const_def = { "const" ~ ":" ~ ident ~ ( "," ~ ident )* }
+const_def = { "const" ~ ":" ~ ctor_def ~ ( "," ~ ctor_def )* }
 statement = { named_func | const_def }

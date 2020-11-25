@@ -7,6 +7,31 @@ use crate::parser::*;
 use crate::transpiler::CoqStmt::Definition;
 
 use self::CoqExpr::*;
+use std::iter::repeat;
+
+#[derive(PartialEq, Debug, Clone)]
+struct Consts {
+    idents: HashSet<String>,
+    ctors: Vec<HashSet<CtorDef>>
+}
+
+impl Consts {
+    fn contains(&self, ident: &str) -> bool {
+        self.idents.iter()
+            .filter(|group| group.contains(ident))
+            .next().is_some()
+    }
+    fn find_ctor_group(&self, ctors: &HashSet<CtorDef>) -> Option<HashSet<CtorDef>> {
+        self.ctors.iter()
+            .filter(|group| group.is_superset(ctors))
+            .next().cloned()
+    }
+    fn find_ctor(&self, ident: &str) -> Option<CtorDef> {
+        self.ctors.iter()
+            .filter_map(|group| group.into_iter().filter(|ctor|ctor.ident == ident).next())
+            .next().cloned()
+    }
+}
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct CoqProgram {
@@ -107,13 +132,13 @@ fn indent(input_str: &str) -> String {
 
 pub fn transpile(input_program: Program) -> CoqProgram {
     let statements = input_program.stmts;
-    let const_groups = extract_const_groups(&statements);
+    let consts = extract_consts(&statements);
 
     let mut coq_stmts: Vec<CoqStmt> = vec![];
     statements.iter().for_each(|stmt| {
         match stmt {
             Stmt::NamedFunc { name, expr } => {
-                coq_stmts.push(Definition { name: name.to_string(), expr: Box::new(transpile_expr(*expr.clone(), &const_groups)) })
+                coq_stmts.push(Definition { name: name.to_string(), expr: Box::new(transpile_expr(*expr.clone(), &consts)) })
             }
             Stmt::ConstDef(_) => ()
         }
@@ -121,27 +146,25 @@ pub fn transpile(input_program: Program) -> CoqProgram {
     CoqProgram { stmts: coq_stmts }
 }
 
-fn transpile_expr(expr: Expr, const_groups: &Vec<HashSet<String>>) -> CoqExpr {
+fn transpile_expr(expr: Expr, consts: &Consts) -> CoqExpr {
     match expr {
         Expr::App(exprs) => {
             let coq_exprs: Vec<Box<CoqExpr>> = exprs.into_iter()
-                .map(|x| Box::new(transpile_expr(*x, const_groups)))
+                .map(|x| Box::new(transpile_expr(*x, consts)))
                 .collect();
             App(coq_exprs)
         }
         Expr::Mat { pat, branches } => {
-            let coq_pat = transpile_expr(*pat, &const_groups);
-            let coq_branches = transpile_match_branches(branches, const_groups);
+            let coq_pat = transpile_expr(*pat, &consts);
+            let coq_branches = transpile_match_branches(branches, consts);
             Mat { pat: Box::new(coq_pat), branches: coq_branches }
         }
         Expr::Abs { var, expr } => {
-            let coq_expr = transpile_expr(*expr, const_groups);
+            let coq_expr = transpile_expr(*expr, consts);
             Abs { var, expr: Box::new(coq_expr) }
         }
         Expr::Ident(s) => {
-            let mut idents:HashSet<String> = HashSet::new();
-            idents.insert(s.clone());
-            if idents_in_const_groups(&idents, const_groups).is_some() {
+            if consts.contains(&s) {
                 Const(s)
             } else {
                 Var(s)
@@ -150,14 +173,15 @@ fn transpile_expr(expr: Expr, const_groups: &Vec<HashSet<String>>) -> CoqExpr {
     }
 }
 
-fn transpile_match_branches(branches: Vec<Box<MatchBranch>>, const_groups: &Vec<HashSet<String>>) -> Vec<Box<CoqMatchBranch>> {
-    let mut matched_ctors: HashSet<String> = HashSet::new();
+fn transpile_match_branches(branches: Vec<Box<MatchBranch>>, consts: &Consts) -> Vec<Box<CoqMatchBranch>> {
+    let mut matched_ctors: HashSet<CtorDef> = HashSet::new();
     let mut coq_branches: Vec<Box<CoqMatchBranch>> = vec![];
     for branch in branches {
         let pat = branch.pat;
         let expr = branch.expr;
         match pat {
-            Pat::Constructor { ctor, args } => {
+            Pat::Constructor { ctor: ident, args } => {
+                let ctor = consts.find_ctor(&ident).expect("no matched ctor");
                 if matched_ctors.contains(&ctor) {
                     panic!("duplicate match branch")
                 }
@@ -165,17 +189,17 @@ fn transpile_match_branches(branches: Vec<Box<MatchBranch>>, const_groups: &Vec<
 
                 coq_branches.push(Box::new(
                     CoqMatchBranch {
-                        pat: CoqPat { ctor, args },
-                        expr: Box::new(transpile_expr(*expr, const_groups))
+                        pat: CoqPat { ctor: ctor.ident, args },
+                        expr: Box::new(transpile_expr(*expr, consts))
                     }
                 ));
             }
             Pat::Ignore => {
-                let matched_const_group = idents_in_const_groups(&matched_ctors, &const_groups)
+                let matched_consts = consts.find_ctor_group(&matched_ctors)
                     .expect("unable to match a set of consts");
-                let mut current_matched_ctors: HashSet<String> = HashSet::new();
+                let mut current_matched_ctors: HashSet<CtorDef> = HashSet::new();
                 {
-                    let remaining_ctors: HashSet<_> = matched_const_group.difference(&matched_ctors).collect();
+                    let remaining_ctors: HashSet<_> = matched_consts.difference(&matched_ctors).collect();
                     if remaining_ctors.is_empty() {
                         panic!("nothing to match.")
                     }
@@ -183,7 +207,7 @@ fn transpile_match_branches(branches: Vec<Box<MatchBranch>>, const_groups: &Vec<
                     for ctor in remaining_ctors {
                         current_matched_ctors.insert(ctor.clone());
                         coq_branches.push(Box::new(
-                            CoqMatchBranch { pat: CoqPat { ctor: ctor.clone(), args: vec![] }, expr: Box::new(transpile_expr(*expr.clone(), const_groups)) }
+                            CoqMatchBranch { pat: CoqPat { ctor: ctor.ident.clone(), args: repeat(String::from("_")).take(ctor.argc).collect() }, expr: Box::new(transpile_expr(*expr.clone(), consts)) }
                         ))
                     }
                 }
@@ -194,26 +218,20 @@ fn transpile_match_branches(branches: Vec<Box<MatchBranch>>, const_groups: &Vec<
     coq_branches
 }
 
-fn idents_in_const_groups(idents: &HashSet<String>, const_groups: &Vec<HashSet<String>>) -> Option<HashSet<String>> {
-    const_groups.into_iter()
-        .filter(|group|{
-            group.is_superset(idents)
-        }).next().cloned()
-}
 
-fn extract_const_groups(stmts: &Vec<Stmt>) -> Vec<HashSet<String>> {
-    let mut const_groups: Vec<HashSet<String>> = vec![];
+fn extract_consts(stmts: &Vec<Stmt>) -> Consts {
+    let mut const_groups: Vec<HashSet<CtorDef>> = vec![];
     let mut all_consts: HashSet<String> = HashSet::new();
     stmts.iter().for_each(|stmt| {
         match stmt {
             Stmt::NamedFunc { .. } => (),
             Stmt::ConstDef(consts) => {
-                let mut group: HashSet<String> = HashSet::new();
+                let mut group: HashSet<CtorDef> = HashSet::new();
                 consts.iter().for_each(|c| {
-                    if all_consts.contains(c) {
+                    if all_consts.contains(&c.ident) {
                         panic!("duplicate const declaration")
                     }
-                    all_consts.insert(c.clone());
+                    all_consts.insert(c.ident.clone());
                     group.insert(c.clone());
                 });
                 const_groups.push(group);
@@ -221,5 +239,5 @@ fn extract_const_groups(stmts: &Vec<Stmt>) -> Vec<HashSet<String>> {
         }
     });
 
-    const_groups
+    Consts{ idents: all_consts, ctors: const_groups }
 }
