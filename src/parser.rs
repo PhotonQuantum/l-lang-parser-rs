@@ -17,12 +17,13 @@ pub struct Program {
 #[derive(Eq, PartialEq, Debug, Clone, Hash)]
 pub struct CtorDef {
     pub ident: String,
-    pub argc: usize
+    pub argc: usize,
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Stmt {
     NamedFunc { name: String, expr: Box<Expr> },
+    RecFunc { name: String, expr: Box<Expr> },
     ConstDef(Vec<CtorDef>),
 }
 
@@ -59,10 +60,10 @@ pub fn parse(source: &str) -> Result<Program, Error<Rule>> {
                 match pair.as_rule() {
                     Rule::statement => {
                         ast.push(parse_stmt(pair.into_inner().next().unwrap()))
-                    },
+                    }
                     Rule::EOI => {
                         is_terminated = true
-                    },
+                    }
                     _ => {
                         panic!("unexpected token when parsing program: {}", pair.as_str())
                     }
@@ -86,6 +87,12 @@ pub fn parse_stmt(pair: pest::iterators::Pair<Rule>) -> Stmt {
             let expr = pair.next().unwrap();
             NamedFunc { name: name.as_str().to_string(), expr: Box::new(parse_expr(expr)) }
         }
+        Rule::recursive_func => {
+            let mut pair = pair.into_inner();
+            let name = pair.next().unwrap();
+            let expr = pair.next().unwrap();
+            RecFunc { name: name.as_str().to_string(), expr: Box::new(parse_expr(expr)) }
+        }
         Rule::const_def => {
             let consts: Vec<CtorDef> = pair.into_inner().map(|x| parse_ctor_def(x)).collect();
             ConstDef(consts)
@@ -100,7 +107,7 @@ pub fn parse_ctor_def(pair: pest::iterators::Pair<Rule>) -> CtorDef {
     let mut pair = pair.into_inner();
     let ident = pair.next().unwrap().as_str().to_string();
     let argc = pair.count();
-    CtorDef{ ident, argc }
+    CtorDef { ident, argc }
 }
 
 pub fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
