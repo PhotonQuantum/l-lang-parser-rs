@@ -9,6 +9,7 @@ use std::io::Read;
 
 use crate::parser::parse;
 use crate::transpiler::transpile;
+use std::process::exit;
 
 mod parser;
 mod transpiler;
@@ -17,16 +18,17 @@ fn main() {
     let mut file = File::open("run.l").unwrap();
     let mut buffer = String::new();
     file.read_to_string(&mut buffer).unwrap();
-    println!(
-        "{}",
-        match parse(&buffer) {
-            Err(err) => format!("{}", err),
-            Ok(ast) => {
-                match transpile(ast){
-                    Err(err) => err.to_string(),
-                    Ok(transpiled_code) => format!("{}", transpiled_code)
-                }
-            }
+    match parse(&buffer) {
+        Err(err) => {
+            eprintln!("{}", err);
+            exit(1)
         }
-    )
+        Ok(ast) => match transpile(ast) {
+            Err(err) => {
+                eprintln!("{}", err);
+                exit(1)
+            }
+            Ok(transpiled_code) => println!("{}", transpiled_code),
+        },
+    }
 }

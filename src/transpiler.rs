@@ -25,10 +25,10 @@ impl Rho {
     fn with_vars(&self, vars: &HashSet<String>) -> Rho {
         let var_symbols: HashMap<String, Symbol> =
             vars.iter().map(|var| (var.clone(), Symbol::Var)).collect();
-        self.with(&var_symbols, true)
+        self.with(&var_symbols, true).unwrap()
     }
 
-    fn with_funcs(&self, funcs: &HashSet<String>) -> Rho {
+    fn with_funcs(&self, funcs: &HashSet<String>) -> Result<Rho, String> {
         let func_symbols: HashMap<String, Symbol> = funcs
             .iter()
             .map(|var| (var.clone(), Symbol::Func))
@@ -36,21 +36,35 @@ impl Rho {
         self.with(&func_symbols, false)
     }
 
-    fn with(&self, symbols: &HashMap<String, Symbol>, allow_overwrite: bool) -> Rho {
+    fn with(
+        &self,
+        symbols: &HashMap<String, Symbol>,
+        allow_overwrite: bool,
+    ) -> Result<Rho, String> {
         if !allow_overwrite {
             let self_symbol_set: HashSet<_> = HashSet::from_iter(self.symbols.keys());
             let other_symbol_set: HashSet<_> = HashSet::from_iter(symbols.keys());
             if !self_symbol_set.is_disjoint(&other_symbol_set) {
-                panic!("conflict symbols")
+                return Err(format!(
+                    "conflict symbol(s): [{}]",
+                    other_symbol_set
+                        .into_iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
             }
         }
 
-        let mut self_symbols = self.symbols.clone();
-        self_symbols.extend(symbols.clone());
-        Rho {
-            symbols: self_symbols,
+        Ok(Rho {
+            symbols: self
+                .symbols
+                .clone()
+                .into_iter()
+                .chain(symbols.clone())
+                .collect(),
             ctors: self.ctors.clone(),
-        }
+        })
     }
 
     fn find_symbol(&self, ident: &str) -> Option<Symbol> {
@@ -253,7 +267,7 @@ pub fn transpile(input_program: Program) -> Result<CoqProgram, String> {
                                 }],
                             ]
                             .concat(),
-                            rho.with_funcs(&HashSet::from_iter(vec![name.clone()])),
+                            rho.with_funcs(&HashSet::from_iter(vec![name.clone()]))?,
                         ),
                         Stmt::RecFunc { name, expr } => (
                             [
@@ -267,7 +281,7 @@ pub fn transpile(input_program: Program) -> Result<CoqProgram, String> {
                                 }],
                             ]
                             .concat(),
-                            rho.with_funcs(&HashSet::from_iter(vec![name.clone()])),
+                            rho.with_funcs(&HashSet::from_iter(vec![name.clone()]))?,
                         ),
                         _ => (coq_stmts, rho),
                     })
@@ -359,8 +373,8 @@ fn transpile_match_branches(
                                         )?),
                                     })],
                                 ]
-                                .concat(),
-                                matched_ctors.union(&hashset!{ctor}).cloned().collect()
+                                    .concat(),
+                                matched_ctors.union(&hashset! {ctor}).cloned().collect()
                             ))
                         }
                     }
@@ -372,7 +386,7 @@ fn transpile_match_branches(
                                 .map(|ctor| ctor.to_string())
                                 .collect::<Vec<_>>()
                                 .join(", "))
-                                .map(|x|format!("[{}]", x))
+                                .map(|x| format!("[{}]", x))
                                 .collect::<Vec<_>>()
                                 .join(",\n")),
                             matched_ctors
@@ -384,7 +398,8 @@ fn transpile_match_branches(
                         let remaining_ctors: HashSet<_> =
                             matched_consts.difference(&matched_ctors).collect();
                         if remaining_ctors.is_empty() {
-                            Err(format!("Unable to autofill consts.\nReason: current match is already exhausted.\nCurrent match: [{}]", matched_consts.iter().map(|ctor|ctor.to_string()).collect::<Vec<_>>().join(", ")))
+                            Err(format!("Unable to autofill consts.\nReason: current match is already exhausted.\nCurrent match: [{}]",
+                                        matched_consts.iter().map(|ctor| ctor.to_string()).collect::<Vec<_>>().join(", ")))
                         } else {
                             let (new_branches, current_matched_ctors) = remaining_ctors
                                 .into_iter()
@@ -407,8 +422,8 @@ fn transpile_match_branches(
                                                     )?),
                                                 })],
                                             ]
-                                            .concat(),
-                                            current_matched_ctors.union(&hashset!{ctor.clone()}).cloned().collect(),
+                                                .concat(),
+                                            current_matched_ctors.union(&hashset! {ctor.clone()}).cloned().collect(),
                                         ))
                                     ,
                                 )?;

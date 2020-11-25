@@ -25,7 +25,7 @@ pub struct CtorDef {
 
 impl Display for CtorDef {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let args:Vec<_> = repeat("_").take(self.argc).collect();
+        let args: Vec<_> = repeat("_").take(self.argc).collect();
         if args.len() > 0 {
             write!(f, "({} {})", self.ident, args.join(" "))
         } else {
