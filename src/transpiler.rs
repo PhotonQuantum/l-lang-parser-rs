@@ -22,10 +22,10 @@ struct Rho {
 }
 
 impl Rho {
-    fn with_vars(&self, vars: &HashSet<String>) -> Rho {
+    fn with_vars(&self, vars: &HashSet<String>) -> Result<Rho, String> {
         let var_symbols: HashMap<String, Symbol> =
             vars.iter().map(|var| (var.clone(), Symbol::Var)).collect();
-        self.with(&var_symbols, true).unwrap()
+        self.with(&var_symbols, true)
     }
 
     fn with_funcs(&self, funcs: &HashSet<String>) -> Result<Rho, String> {
@@ -109,7 +109,7 @@ impl Rho {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct CoqProgram {
-    stmts: Vec<CoqStmt>,
+    pub stmts: Vec<CoqStmt>,
 }
 
 impl Display for CoqProgram {
@@ -134,7 +134,7 @@ impl Display for CoqStmt {
         match self {
             CoqStmt::Definition { name, expr } => write!(
                 f,
-                "Definition {}: tm :=\n{}.",
+                "Definition {}: tm :=\n{}.\n",
                 name,
                 indent(&expr.to_string())
             ),
@@ -274,10 +274,15 @@ pub fn transpile(input_program: Program) -> Result<CoqProgram, String> {
                                 coq_stmts.as_slice(),
                                 &[Definition {
                                     name: name.clone(),
-                                    expr: Box::new(Rec(Box::new(transpile_expr(
-                                        *expr.clone(),
-                                        &rho,
-                                    )?))),
+                                    expr: Box::new(Rec(Box::new(Abs {
+                                        var: name.clone(),
+                                        expr: Box::new(transpile_expr(
+                                            *expr.clone(),
+                                            &rho.with_vars(&HashSet::from_iter(vec![
+                                                name.clone()
+                                            ]))?,
+                                        )?),
+                                    }))),
                                 }],
                             ]
                             .concat(),
@@ -308,7 +313,7 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
             var: var.clone(),
             expr: Box::new(transpile_expr(
                 *expr,
-                &rho.with_vars(&HashSet::from_iter(vec![var.clone()])),
+                &rho.with_vars(&HashSet::from_iter(vec![var.clone()]))?,
             )?),
         },
         Expr::Ident(s) => {
@@ -369,7 +374,7 @@ fn transpile_match_branches(
                                         },
                                         expr: Box::new(transpile_expr(
                                             *expr,
-                                            &rho.with_vars(&HashSet::from_iter(args)),
+                                            &rho.with_vars(&HashSet::from_iter(args))?,
                                         )?),
                                     })],
                                 ]

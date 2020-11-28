@@ -15,6 +15,6 @@ expr = _{ app | mat | abs | ident }
 
 ctor_def = ${ ident | "(" ~ ident ~ (" " ~ ignore)+ ~ ")" }
 named_func = { "def" ~ ident ~ ":=" ~ expr }
-recursive_func = { "rec" ~ ident ~ ":=" ~ expr }
+recursive_func = { "fix" ~ ident ~ ":=" ~ expr }
 const_def = { "const" ~ ":" ~ ctor_def ~ ( "," ~ ctor_def )* }
 statement = { named_func | recursive_func | const_def }
