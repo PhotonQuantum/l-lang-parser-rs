@@ -3,15 +3,24 @@ program = { SOI ~ statement+ ~ EOI }
 lam = _{ "λ"|"lam" }
 ignore = @{ "_" }
 WHITESPACE = _{ " " | NEWLINE | "\t" }
+COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
 
-ident = @{ ASCII_ALPHANUMERIC ~ ( ASCII_ALPHANUMERIC | "_" )* }
+ident = @{ ASCII_ALPHANUMERIC ~ ( ASCII_ALPHANUMERIC | "_" | "'" )* }
+
+inner = @{ char* }
+char = {
+    !("\"" | "\\") ~ ANY
+    | "\\" ~ ("\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t")
+}
+string_literal = ${ "\"" ~ inner ~ "\"" }   // syntactic sugar
 
 pat = ${ ( ident ~ (" " ~ ( ident | ignore ) )* ) | ignore }
 match_branch = { "|" ~ pat ~ "=>" ~ expr }
 mat = { "match" ~ expr ~ match_branch+ ~ "end" }
+mat_if = { "if" ~ expr ~ "then" ~ expr ~ "else" ~ expr }    // syntactic sugar
 abs = { lam ~ ident ~ "." ~ expr }
 app = ${ "(" ~ expr ~ (" " ~ expr)+ ~ ")" }
-expr = _{ app | mat | abs | ident }
+expr = _{ app | mat | mat_if | abs | string_literal | ident }
 
 ctor_def = ${ ident | "(" ~ ident ~ (" " ~ ignore)+ ~ ")" }
 named_func = { "def" ~ ident ~ ":=" ~ expr }

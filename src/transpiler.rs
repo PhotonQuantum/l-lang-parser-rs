@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::iter::{repeat, FromIterator};
@@ -278,9 +278,9 @@ pub fn transpile(input_program: Program) -> Result<CoqProgram, String> {
                                         var: name.clone(),
                                         expr: Box::new(transpile_expr(
                                             *expr.clone(),
-                                            &rho.with_vars(&HashSet::from_iter(vec![
-                                                name.clone()
-                                            ]))?,
+                                            &rho.with_vars(&HashSet::from_iter(
+                                                vec![name.clone()],
+                                            ))?,
                                         )?),
                                     }))),
                                 }],
@@ -309,6 +309,34 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
             expr: Box::new(transpile_expr(*pat, &rho)?),
             branches: transpile_match_branches(branches, rho)?,
         },
+        Expr::MatIf {
+            expr: pat,
+            success,
+            fail,
+        } => {
+            if let Err(e) = ensure_ctors(vec![("true", 0), ("false", 0)], rho) {
+                return Err(format!("If statement is not available when there's no bool ctors.\nConsider adding:\n{}", e));
+            }
+            Mat {
+                expr: Box::new(transpile_expr(*pat, &rho)?),
+                branches: vec![
+                    Box::new(CoqMatchBranch {
+                        pat: CoqPat {
+                            ctor: String::from("true"),
+                            args: vec![],
+                        },
+                        expr: Box::new(transpile_expr(*success, &rho)?),
+                    }),
+                    Box::new(CoqMatchBranch {
+                        pat: CoqPat {
+                            ctor: String::from("false"),
+                            args: vec![],
+                        },
+                        expr: Box::new(transpile_expr(*fail, &rho)?),
+                    }),
+                ],
+            }
+        }
         Expr::Abs { var, expr } => Abs {
             var: var.clone(),
             expr: Box::new(transpile_expr(
@@ -326,7 +354,60 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
                 Symbol::Func => CoqObj(s),
             }
         }
+        Expr::StringLiteral(string_literal) => {
+            if let Err(e) = ensure_ctors(vec![("Ascii", 8)], rho) {
+                return Err(format!("String literal is not available when there's no Ascii ctors.\nConsider adding:\n{}", e));
+            }
+            if let Err(e) = ensure_ctors(vec![("String", 2), ("EmptyString", 0)], rho) {
+                return Err(format!("String literal is not available when there's no String or EmptyString ctors.\nConsider adding:\n{}", e));
+            }
+            transpile_string_literal(&string_literal)?
+        }
     })
+}
+
+fn transpile_string_literal(string_literal: &str) -> Result<CoqExpr, String> {
+    let coq_chars: Vec<CoqExpr> = string_literal
+        .chars()
+        .map(|char| {
+            let mut b = [0; 2];
+            char.encode_utf8(&mut b);
+            if b[1] != 0 {
+                Err(format!("{} is not a valid ascii string.", string_literal))
+            } else {
+                let mut byte = b[0];
+                let mut bits: VecDeque<bool> = VecDeque::new();
+                byte /= 2;
+                for _ in 0..8 {
+                    bits.push_front(byte % 2 == 0);
+                    byte /= 2;
+                }
+                let mut ascii_expr: VecDeque<Box<CoqExpr>> = bits
+                    .iter()
+                    .map(|b| {
+                        Box::new(if *b {
+                            Const(String::from("true"))
+                        } else {
+                            Const(String::from("false"))
+                        })
+                    })
+                    .collect();
+                ascii_expr.push_front(Box::new(Const(String::from("Ascii"))));
+                Ok(App(Vec::<Box<CoqExpr>>::from(ascii_expr)))
+            }
+        })
+        .collect::<Result<Vec<CoqExpr>, String>>()?;
+    Ok(coq_chars
+        .into_iter()
+        .fold(Const(String::from("EmptyString")), |prec, expr| {
+            App(vec![
+                Box::new(App(vec![
+                    Box::new(Const(String::from("String"))),
+                    Box::new(expr),
+                ])),
+                Box::new(prec),
+            ])
+        }))
 }
 
 fn transpile_match_branches(
@@ -488,4 +569,28 @@ fn extract_base_rho(stmts: &Vec<Stmt>) -> Result<Rho, String> {
         symbols,
         ctors: const_groups,
     })
+}
+
+fn ensure_ctors(ctors: Vec<(&str, usize)>, rho: &Rho) -> Result<(), String> {
+    let ctor_defs: Vec<CtorDef> = ctors
+        .into_iter()
+        .map(|(name, argc)| CtorDef {
+            ident: name.to_string(),
+            argc,
+        })
+        .collect();
+    if !(ctor_defs.iter().fold(true, |b, ctor_def| {
+        b && rho.find_ctor(&ctor_def.ident) == Some(ctor_def.clone())
+    })) {
+        Err(format!(
+            "const: {}",
+            ctor_defs
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ))
+    } else {
+        Ok(())
+    }
 }

@@ -159,7 +159,6 @@ Fixpoint multi_next_state(t: tm)(limit: nat): list tm :=
                  end
   | None => nil
   end.
-
 ";
 
 pub fn check_main(coq_ast: &CoqProgram) -> bool {
@@ -175,30 +174,25 @@ pub fn check_main(coq_ast: &CoqProgram) -> bool {
 }
 
 pub enum Mode {
-    Run {
-        with_steps: bool,
-        recursion_limit: usize,
-    },
-    Export {
-        base: bool,
-    },
+    Run { with_steps: bool, step_limit: usize },
+    Export { base: bool },
 }
 
 pub fn generate_coq_code<'a>(coq_ast: &CoqProgram, mode: Mode) -> String {
     match mode {
         Mode::Run {
             with_steps,
-            recursion_limit,
+            step_limit,
         } => {
             if with_steps {
                 format!(
                     "{}\n{}\nCompute (multi_next_state main {}).",
-                    COQ_BASE, &coq_ast, recursion_limit
+                    COQ_BASE, &coq_ast, step_limit
                 )
             } else {
                 format!(
                     "{}\n{}\nCompute (head (multi_next_state main {})).",
-                    COQ_BASE, &coq_ast, recursion_limit
+                    COQ_BASE, &coq_ast, step_limit
                 )
             }
         }

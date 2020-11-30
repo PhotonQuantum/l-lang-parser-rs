@@ -8,6 +8,8 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::iter::repeat;
 
+const ESCAPABLE_CHARS: [&str; 8] = ["\"", "\\", "/", "b", "f", "n", "r", "t"];
+
 #[derive(Parser)]
 #[grammar = "l.pest"]
 pub struct LParser;
@@ -48,11 +50,17 @@ pub enum Expr {
         expr: Box<Expr>,
         branches: Vec<Box<MatchBranch>>,
     },
+    MatIf {
+        expr: Box<Expr>,
+        success: Box<Expr>,
+        fail: Box<Expr>,
+    },
     Abs {
         var: String,
         expr: Box<Expr>,
     },
     Ident(String),
+    StringLiteral(String),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -140,22 +148,47 @@ pub fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
             let expr = pair.next().unwrap();
             let branches: Vec<Box<MatchBranch>> =
                 pair.map(|x| Box::new(parse_match_branch(x))).collect();
-            return Mat {
+            Mat {
                 expr: Box::new(parse_expr(expr)),
                 branches,
-            };
+            }
+        }
+        Rule::mat_if => {
+            let mut pair = pair.into_inner();
+            let expr = pair.next().unwrap();
+            let succ = pair.next().unwrap();
+            let fail = pair.next().unwrap();
+            MatIf {
+                expr: Box::new(parse_expr(expr)),
+                success: Box::new(parse_expr(succ)),
+                fail: Box::new(parse_expr(fail)),
+            }
         }
         Rule::abs => {
             let mut pair = pair.into_inner();
             let var = pair.next().unwrap();
             let expr = pair.next().unwrap();
-            return Abs {
+            Abs {
                 var: var.as_str().to_string(),
                 expr: Box::new(parse_expr(expr)),
-            };
+            }
         }
-        Rule::ident => {
-            return Ident(pair.as_str().to_string());
+        Rule::ident => Ident(pair.as_str().to_string()),
+        Rule::string_literal => {
+            let string_lit = pair
+                .as_str()
+                .strip_suffix("\"")
+                .unwrap()
+                .strip_prefix("\"")
+                .unwrap()
+                .to_string();
+            StringLiteral(
+                ESCAPABLE_CHARS
+                    .iter()
+                    .fold(string_lit, |string_lit, escaped_char| {
+                        string_lit.replace(format!("\\{}", escaped_char).as_str(), escaped_char)
+                    }),
+            )
         }
         _ => unreachable!(),
     }
