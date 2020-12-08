@@ -536,9 +536,9 @@ fn extract_base_rho(stmts: &Vec<Stmt>) -> Result<Rho, String> {
             Vec::<HashSet<CtorDef>>::new(),
             HashMap::<String, Symbol>::new(),
         ),
-        |(const_groups, symbols), stmt| {
-            let (group, new_symbols) = match stmt {
-                Stmt::ConstDef(consts) => consts.iter().try_fold(
+        |(const_groups, symbols), stmt| match stmt {
+            Stmt::ConstDef(consts) => {
+                let (group, new_symbols) = consts.iter().try_fold(
                     (HashSet::<CtorDef>::new(), HashMap::<String, Symbol>::new()),
                     |(group, new_symbols), ctor| {
                         if symbols.contains_key(&ctor.ident)
@@ -555,13 +555,13 @@ fn extract_base_rho(stmts: &Vec<Stmt>) -> Result<Rho, String> {
                             ))
                         }
                     },
-                )?,
-                _ => (hashset! {}, hashmap! {}),
-            };
-            Ok((
-                [const_groups.as_slice(), &[group]].concat(),
-                symbols.into_iter().chain(new_symbols).collect(),
-            ))
+                )?;
+                Ok((
+                    [const_groups.as_slice(), &[group]].concat(),
+                    symbols.into_iter().chain(new_symbols).collect(),
+                ))
+            }
+            _ => Ok((const_groups, symbols)),
         },
     )?;
 
