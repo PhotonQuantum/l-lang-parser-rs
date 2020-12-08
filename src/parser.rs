@@ -203,8 +203,6 @@ pub fn parse_match_branch(pair: pest::iterators::Pair<Rule>) -> MatchBranch {
     let expr = parse_expr(pair.next().unwrap());
 
     if pat.len() == 0 {
-        panic!("invalid pat")
-    } else if pat.len() == 1 && pat[0] == "_" {
         MatchBranch {
             pat: Ignore,
             expr: box expr,
