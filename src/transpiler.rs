@@ -358,7 +358,7 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
             if let Err(e) = ensure_ctors(vec![("Ascii", 8)], rho) {
                 return Err(format!("String literal is not available when there's no Ascii ctors.\nConsider adding:\n{}", e));
             }
-            if let Err(e) = ensure_ctors(vec![("String", 2), ("EmptyString", 0)], rho) {
+            if let Err(e) = ensure_ctors(vec![("String", 1), ("EmptyString", 0)], rho) {
                 return Err(format!("String literal is not available when there's no String or EmptyString ctors.\nConsider adding:\n{}", e));
             }
             transpile_string_literal(&string_literal)?
