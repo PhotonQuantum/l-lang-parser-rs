@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::iter::{repeat, FromIterator};
+use std::iter::FromIterator;
 
 use crate::parser::*;
 
@@ -147,7 +147,9 @@ pub enum CoqExpr {
     App(Vec<Box<CoqExpr>>),
     Mat {
         expr: Box<CoqExpr>,
-        branches: Vec<Box<CoqMatchBranch>>,
+        ctor: String,
+        then: Box<CoqExpr>,
+        els: Box<CoqExpr>,
     },
     Abs {
         var: String,
@@ -171,29 +173,30 @@ impl Display for CoqExpr {
                 write!(f, "{}", output)
             }
             Mat {
-                expr: pat,
-                branches,
+                expr,
+                ctor,
+                then,
+                els,
             } => {
-                let pat_str = pat.to_string();
-                let branch_strs: Vec<String> = branches.iter().map(|e| e.to_string()).collect();
-                let branch_output = branch_strs
-                    .into_iter()
-                    .fold_first(|x, y| format!("{};\n{}", x, y))
-                    .unwrap();
                 write!(
                     f,
-                    "(mat {} [\n{}\n])",
-                    pat_str,
-                    indent(branch_output.as_str())
+                    "(mat {} \"{}\" {} {})",
+                    expr.to_string(),
+                    ctor,
+                    then.to_string(),
+                    els.to_string()
                 )
             }
             Abs { var, expr } => {
-                let expr_str = expr.to_string();
-                write!(f, "(abs \"{}\"\n{}\n)", var, indent(expr_str.as_str()))
+                write!(
+                    f,
+                    "(abs \"{}\"\n{}\n)",
+                    var,
+                    indent(expr.to_string().as_str())
+                )
             }
             Rec(expr) => {
-                let expr_str = expr.to_string();
-                write!(f, "(rec {})", expr_str.as_str())
+                write!(f, "(rec {})", expr.to_string().as_str())
             }
             Const(s) => write!(f, "(const \"{}\")", s),
             Var(s) => write!(f, "(var \"{}\")", s),
@@ -302,13 +305,7 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
             .into_iter()
             .map(|x| Ok(box transpile_expr(*x, rho)?))
             .collect::<Result<Vec<_>, String>>()?),
-        Expr::Mat {
-            expr: pat,
-            branches,
-        } => Mat {
-            expr: box transpile_expr(*pat, &rho)?,
-            branches: transpile_match_branches(branches, rho)?,
-        },
+        Expr::Mat { expr, branches } => transpile_match(expr, branches, rho)?,
         Expr::MatIf {
             expr: pat,
             success,
@@ -316,26 +313,29 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
         } => {
             if let Err(e) = ensure_ctors(vec![("true", 0), ("false", 0)], rho) {
                 return Err(format!("If statement is not available when there's no bool ctors.\nConsider adding:\n{}", e));
-            }
-            Mat {
-                expr: box transpile_expr(*pat, &rho)?,
-                branches: vec![
-                    box CoqMatchBranch {
-                        pat: CoqPat {
-                            ctor: String::from("true"),
-                            args: vec![],
+            };
+            transpile_expr(
+                Expr::Mat {
+                    expr: pat,
+                    branches: vec![
+                        box MatchBranch {
+                            pat: Pat::Constructor {
+                                ctor: String::from("true"),
+                                args: vec![],
+                            },
+                            expr: success,
                         },
-                        expr: box transpile_expr(*success, &rho)?,
-                    },
-                    box CoqMatchBranch {
-                        pat: CoqPat {
-                            ctor: String::from("false"),
-                            args: vec![],
+                        box MatchBranch {
+                            pat: Pat::Constructor {
+                                ctor: String::from("false"),
+                                args: vec![],
+                            },
+                            expr: fail,
                         },
-                        expr: box transpile_expr(*fail, &rho)?,
-                    },
-                ],
-            }
+                    ],
+                },
+                rho,
+            )?
         }
         Expr::Abs { var, expr } => Abs {
             var: var.clone(),
@@ -401,24 +401,29 @@ fn transpile_string_literal(string_literal: &str) -> Result<CoqExpr, String> {
         .into_iter()
         .fold(Const(String::from("EmptyString")), |prec, expr| {
             App(vec![
-                box App(vec![
-                    box Const(String::from("String")),
-                    box expr,
-                ]),
+                box App(vec![box Const(String::from("String")), box expr]),
                 box prec,
             ])
         }))
 }
 
-fn transpile_match_branches(
+fn transpile_match(
+    expr: Box<Expr>,
     branches: Vec<Box<MatchBranch>>,
     rho: &Rho,
-) -> Result<Vec<Box<CoqMatchBranch>>, String> {
+) -> Result<CoqExpr, String> {
+    let coq_expr = transpile_expr(*expr, rho)?;
+    let last_branch = branches.last().ok_or("Empty match.")?;
+    let wild_branch = if let Pat::Ignore = last_branch.pat {
+        transpile_expr(*last_branch.expr.clone(), rho)?
+    } else {
+        Const(String::from("UNREACHABLE"))
+    };
     branches
         .into_iter()
-        .try_fold(
-            (Vec::<Box<CoqMatchBranch>>::new(), HashSet::<CtorDef>::new()),
-            |(coq_branches, matched_ctors), branch| {
+        .try_rfold(
+            (wild_branch, HashSet::<CtorDef>::new()),
+            |(els_branch, matched_ctors), branch| {
                 let MatchBranch { pat, expr } = *branch;
                 match pat {
                     Pat::Constructor { ctor: ident, args } => {
@@ -444,90 +449,49 @@ fn transpile_match_branches(
                                     ident, ctor
                                 ))
                             }
-                        } else {
-                            Ok((
-                                [
-                                    coq_branches.as_slice(),
-                                    &[box CoqMatchBranch {
-                                        pat: CoqPat {
-                                            ctor: ctor.ident.clone(),
-                                            args: args.clone(),
-                                        },
-                                        expr: box transpile_expr(
-                                            *expr,
-                                            &rho.with_vars(&HashSet::from_iter(args))?,
-                                        )?,
-                                    }],
-                                ]
-                                    .concat(),
-                                matched_ctors.union(&hashset! {ctor}).cloned().collect()
-                            ))
-                        }
+                        } else { Ok(()) }?;
+                        rho.find_ctor_group(&matched_ctors.union(&hashset! {ctor.clone()}).cloned().collect())
+                            .ok_or(format!(
+                                "Invalid set of consts.\nExpected: a subset of one of {{\n{}\n}}\nGot: [{}]",
+                                indent(&rho.ctors.iter().map(|group| group
+                                    .iter()
+                                    .map(|ctor| ctor.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", "))
+                                    .map(|x| format!("[{}]", x))
+                                    .collect::<Vec<_>>()
+                                    .join(",\n")),
+                                matched_ctors
+                                    .iter()
+                                    .map(|x| x.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ))?;
+                        let then_abs = args.iter().rfold(transpile_expr(*expr, &rho.with_vars(&HashSet::from_iter(args.clone()))?)?, |inner, arg| {
+                            Abs { var: arg.clone(), expr: box inner }
+                        });
+                        Ok((
+                            Mat {
+                                expr: box coq_expr.clone(),
+                                ctor: ident,
+                                then: box then_abs,
+                                els: box els_branch,
+                            },
+                            matched_ctors.union(&hashset! {ctor}).cloned().collect()
+                        ))
                     }
-                    Pat::Ignore => {
-                        let matched_consts = rho.find_ctor_group(&matched_ctors).ok_or(format!(
-                            "Unable to autofill consts.\nReason: failed to matching const group.\nExpected: a subset of one of {{\n{}\n}}\nGot: [{}]",
-                            indent(&rho.ctors.iter().map(|group| group
-                                .iter()
-                                .map(|ctor| ctor.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", "))
-                                .map(|x| format!("[{}]", x))
-                                .collect::<Vec<_>>()
-                                .join(",\n")),
-                            matched_ctors
-                                .iter()
-                                .map(|x| x.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ))?;
-                        let remaining_ctors: HashSet<_> =
-                            matched_consts.difference(&matched_ctors).collect();
-                        if remaining_ctors.is_empty() {
-                            Err(format!("Unable to autofill consts.\nReason: current match is already exhausted.\nCurrent match: [{}]",
-                                        matched_consts.iter().map(|ctor| ctor.to_string()).collect::<Vec<_>>().join(", ")))
-                        } else {
-                            let (new_branches, current_matched_ctors) = remaining_ctors
-                                .into_iter()
-                                .try_fold::<_, _, Result<_, String>>(
-                                    (Vec::<Box<CoqMatchBranch>>::new(), HashSet::<CtorDef>::new()),
-                                    |(current_coq_branches, current_matched_ctors), ctor|
-                                        Ok((
-                                            [
-                                                current_coq_branches.as_slice(),
-                                                &[box CoqMatchBranch {
-                                                    pat: CoqPat {
-                                                        ctor: ctor.ident.clone(),
-                                                        args: repeat(String::from("_"))
-                                                            .take(ctor.argc)
-                                                            .collect(),
-                                                    },
-                                                    expr: box transpile_expr(
-                                                        *expr.clone(),
-                                                        rho,
-                                                    )?,
-                                                }],
-                                            ]
-                                                .concat(),
-                                            current_matched_ctors.union(&hashset! {ctor.clone()}).cloned().collect(),
-                                        ))
-                                    ,
-                                )?;
-                            Ok((
-                                [coq_branches.as_slice(), new_branches.as_slice()].concat(),
-                                HashSet::from(
-                                    matched_ctors
-                                        .union(&current_matched_ctors)
-                                        .cloned()
-                                        .collect(),
-                                ),
-                            ))
-                        }
-                    }
+                    Pat::Ignore => unreachable!()
                 }
             },
         )
-        .and_then(|x| Ok(x.0))
+        .and_then(|x| {
+            let matched_ctor_group = rho.find_ctor_group(&x.1).ok_or(String::from("unexpected error"))?;
+            if matched_ctor_group.len() > x.1.len() {
+                Err(format!("Match must be exhaustive. Missing ctors: {}", matched_ctor_group.difference(&x.1).map(|x| x.to_string()).collect::<Vec<_>>().join(", ")))
+            } else {
+                Ok(x.0)
+            }
+        })
 }
 
 fn extract_base_rho(stmts: &Vec<Stmt>) -> Result<Rho, String> {

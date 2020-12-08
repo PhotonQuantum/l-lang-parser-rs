@@ -139,15 +139,13 @@ pub fn parse_ctor_def(pair: pest::iterators::Pair<Rule>) -> CtorDef {
 pub fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
     match pair.as_rule() {
         Rule::app => {
-            let exprs: Vec<Box<Expr>> =
-                pair.into_inner().map(|x| box parse_expr(x)).collect();
+            let exprs: Vec<Box<Expr>> = pair.into_inner().map(|x| box parse_expr(x)).collect();
             App(exprs)
         }
         Rule::mat => {
             let mut pair = pair.into_inner();
             let expr = pair.next().unwrap();
-            let branches: Vec<Box<MatchBranch>> =
-                pair.map(|x| box parse_match_branch(x)).collect();
+            let branches: Vec<Box<MatchBranch>> = pair.map(|x| box parse_match_branch(x)).collect();
             Mat {
                 expr: box parse_expr(expr),
                 branches,
