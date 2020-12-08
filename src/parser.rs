@@ -109,7 +109,7 @@ pub fn parse_stmt(pair: pest::iterators::Pair<Rule>) -> Stmt {
             let expr = pair.next().unwrap();
             NamedFunc {
                 name: name.as_str().to_string(),
-                expr: Box::new(parse_expr(expr)),
+                expr: box parse_expr(expr),
             }
         }
         Rule::recursive_func => {
@@ -118,7 +118,7 @@ pub fn parse_stmt(pair: pest::iterators::Pair<Rule>) -> Stmt {
             let expr = pair.next().unwrap();
             RecFunc {
                 name: name.as_str().to_string(),
-                expr: Box::new(parse_expr(expr)),
+                expr: box parse_expr(expr),
             }
         }
         Rule::const_def => {
@@ -140,16 +140,16 @@ pub fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
     match pair.as_rule() {
         Rule::app => {
             let exprs: Vec<Box<Expr>> =
-                pair.into_inner().map(|x| Box::new(parse_expr(x))).collect();
+                pair.into_inner().map(|x| box parse_expr(x)).collect();
             App(exprs)
         }
         Rule::mat => {
             let mut pair = pair.into_inner();
             let expr = pair.next().unwrap();
             let branches: Vec<Box<MatchBranch>> =
-                pair.map(|x| Box::new(parse_match_branch(x))).collect();
+                pair.map(|x| box parse_match_branch(x)).collect();
             Mat {
-                expr: Box::new(parse_expr(expr)),
+                expr: box parse_expr(expr),
                 branches,
             }
         }
@@ -159,9 +159,9 @@ pub fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
             let succ = pair.next().unwrap();
             let fail = pair.next().unwrap();
             MatIf {
-                expr: Box::new(parse_expr(expr)),
-                success: Box::new(parse_expr(succ)),
-                fail: Box::new(parse_expr(fail)),
+                expr: box parse_expr(expr),
+                success: box parse_expr(succ),
+                fail: box parse_expr(fail),
             }
         }
         Rule::abs => {
@@ -170,7 +170,7 @@ pub fn parse_expr(pair: pest::iterators::Pair<Rule>) -> Expr {
             let expr = pair.next().unwrap();
             Abs {
                 var: var.as_str().to_string(),
-                expr: Box::new(parse_expr(expr)),
+                expr: box parse_expr(expr),
             }
         }
         Rule::ident => Ident(pair.as_str().to_string()),
@@ -209,7 +209,7 @@ pub fn parse_match_branch(pair: pest::iterators::Pair<Rule>) -> MatchBranch {
     } else if pat.len() == 1 && pat[0] == "_" {
         MatchBranch {
             pat: Ignore,
-            expr: Box::new(expr),
+            expr: box expr,
         }
     } else {
         MatchBranch {
@@ -217,7 +217,7 @@ pub fn parse_match_branch(pair: pest::iterators::Pair<Rule>) -> MatchBranch {
                 ctor: pat[0].clone(),
                 args: pat[1..].to_vec(),
             },
-            expr: Box::new(expr),
+            expr: box expr,
         }
     }
 }

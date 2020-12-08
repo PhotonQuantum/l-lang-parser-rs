@@ -263,7 +263,7 @@ pub fn transpile(input_program: Program) -> Result<CoqProgram, String> {
                                 coq_stmts.as_slice(),
                                 &[Definition {
                                     name: name.clone(),
-                                    expr: Box::new(transpile_expr(*expr.clone(), &rho)?),
+                                    expr: box transpile_expr(*expr.clone(), &rho)?,
                                 }],
                             ]
                             .concat(),
@@ -274,15 +274,15 @@ pub fn transpile(input_program: Program) -> Result<CoqProgram, String> {
                                 coq_stmts.as_slice(),
                                 &[Definition {
                                     name: name.clone(),
-                                    expr: Box::new(Rec(Box::new(Abs {
+                                    expr: box Rec(box Abs {
                                         var: name.clone(),
-                                        expr: Box::new(transpile_expr(
+                                        expr: box transpile_expr(
                                             *expr.clone(),
                                             &rho.with_vars(&HashSet::from_iter(
                                                 vec![name.clone()],
                                             ))?,
-                                        )?),
-                                    }))),
+                                        )?,
+                                    }),
                                 }],
                             ]
                             .concat(),
@@ -300,13 +300,13 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
     Ok(match expr {
         Expr::App(exprs) => App(exprs
             .into_iter()
-            .map(|x| Ok(Box::new(transpile_expr(*x, rho)?)))
+            .map(|x| Ok(box transpile_expr(*x, rho)?))
             .collect::<Result<Vec<_>, String>>()?),
         Expr::Mat {
             expr: pat,
             branches,
         } => Mat {
-            expr: Box::new(transpile_expr(*pat, &rho)?),
+            expr: box transpile_expr(*pat, &rho)?,
             branches: transpile_match_branches(branches, rho)?,
         },
         Expr::MatIf {
@@ -318,31 +318,31 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
                 return Err(format!("If statement is not available when there's no bool ctors.\nConsider adding:\n{}", e));
             }
             Mat {
-                expr: Box::new(transpile_expr(*pat, &rho)?),
+                expr: box transpile_expr(*pat, &rho)?,
                 branches: vec![
-                    Box::new(CoqMatchBranch {
+                    box CoqMatchBranch {
                         pat: CoqPat {
                             ctor: String::from("true"),
                             args: vec![],
                         },
-                        expr: Box::new(transpile_expr(*success, &rho)?),
-                    }),
-                    Box::new(CoqMatchBranch {
+                        expr: box transpile_expr(*success, &rho)?,
+                    },
+                    box CoqMatchBranch {
                         pat: CoqPat {
                             ctor: String::from("false"),
                             args: vec![],
                         },
-                        expr: Box::new(transpile_expr(*fail, &rho)?),
-                    }),
+                        expr: box transpile_expr(*fail, &rho)?,
+                    },
                 ],
             }
         }
         Expr::Abs { var, expr } => Abs {
             var: var.clone(),
-            expr: Box::new(transpile_expr(
+            expr: box transpile_expr(
                 *expr,
                 &rho.with_vars(&HashSet::from_iter(vec![var.clone()]))?,
-            )?),
+            )?,
         },
         Expr::Ident(s) => {
             match rho.find_symbol(&s).ok_or(format!(
@@ -385,14 +385,14 @@ fn transpile_string_literal(string_literal: &str) -> Result<CoqExpr, String> {
                 let mut ascii_expr: VecDeque<Box<CoqExpr>> = bits
                     .iter()
                     .map(|b| {
-                        Box::new(if *b {
+                        box if *b {
                             Const(String::from("true"))
                         } else {
                             Const(String::from("false"))
-                        })
+                        }
                     })
                     .collect();
-                ascii_expr.push_front(Box::new(Const(String::from("Ascii"))));
+                ascii_expr.push_front(box Const(String::from("Ascii")));
                 Ok(App(Vec::<Box<CoqExpr>>::from(ascii_expr)))
             }
         })
@@ -401,11 +401,11 @@ fn transpile_string_literal(string_literal: &str) -> Result<CoqExpr, String> {
         .into_iter()
         .fold(Const(String::from("EmptyString")), |prec, expr| {
             App(vec![
-                Box::new(App(vec![
-                    Box::new(Const(String::from("String"))),
-                    Box::new(expr),
-                ])),
-                Box::new(prec),
+                box App(vec![
+                    box Const(String::from("String")),
+                    box expr,
+                ]),
+                box prec,
             ])
         }))
 }
@@ -448,16 +448,16 @@ fn transpile_match_branches(
                             Ok((
                                 [
                                     coq_branches.as_slice(),
-                                    &[Box::new(CoqMatchBranch {
+                                    &[box CoqMatchBranch {
                                         pat: CoqPat {
                                             ctor: ctor.ident.clone(),
                                             args: args.clone(),
                                         },
-                                        expr: Box::new(transpile_expr(
+                                        expr: box transpile_expr(
                                             *expr,
                                             &rho.with_vars(&HashSet::from_iter(args))?,
-                                        )?),
-                                    })],
+                                        )?,
+                                    }],
                                 ]
                                     .concat(),
                                 matched_ctors.union(&hashset! {ctor}).cloned().collect()
@@ -495,18 +495,18 @@ fn transpile_match_branches(
                                         Ok((
                                             [
                                                 current_coq_branches.as_slice(),
-                                                &[Box::new(CoqMatchBranch {
+                                                &[box CoqMatchBranch {
                                                     pat: CoqPat {
                                                         ctor: ctor.ident.clone(),
                                                         args: repeat(String::from("_"))
                                                             .take(ctor.argc)
                                                             .collect(),
                                                     },
-                                                    expr: Box::new(transpile_expr(
+                                                    expr: box transpile_expr(
                                                         *expr.clone(),
                                                         rho,
-                                                    )?),
-                                                })],
+                                                    )?,
+                                                }],
                                             ]
                                                 .concat(),
                                             current_matched_ctors.union(&hashset! {ctor.clone()}).cloned().collect(),
