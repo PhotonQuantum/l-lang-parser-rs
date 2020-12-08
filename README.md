@@ -8,7 +8,7 @@ A parser for a toy strict untyped λ-calculus language called L-lang.
 
 You may view the syntax of L-lang in [l.pest](src/l.pest).
 
-There's an example L-lang program called [run.l](run.l). 
+There's an example L-lang program called [examples/evenb.l](examples/evenb.l). 
 
 ### Export to Coq code
 
