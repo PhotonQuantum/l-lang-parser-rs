@@ -409,22 +409,15 @@ fn transpile_string_literal(string_literal: &str) -> Result<CoqExpr, String> {
 
 fn transpile_match(
     expr: Box<Expr>,
-    branches: Vec<Box<MatchBranch>>,
+    mut branches: Vec<Box<MatchBranch>>,
     rho: &Rho,
 ) -> Result<CoqExpr, String> {
-    let coq_expr = transpile_expr(*expr, rho)?;
-    let last_branch = branches.last().ok_or("Empty match.")?;
-    let wild_branch = if let Pat::Ignore = last_branch.pat {
-        transpile_expr(*last_branch.expr.clone(), rho)?
-    } else {
-        Const(String::from("UNREACHABLE"))
-    };
-    branches
-        .into_iter()
-        .try_rfold(
-            (wild_branch, HashSet::<CtorDef>::new()),
-            |(els_branch, matched_ctors), branch| {
-                let MatchBranch { pat, expr } = *branch;
+    let (is_exhaustive, matched_ctor_group, current_ctors) = branches
+        .iter()
+        .try_rfold::<_, _, Result<_, String>>(
+            HashSet::<CtorDef>::new(),
+            |matched_ctors, branch| {
+                let box MatchBranch { pat, expr: _ } = branch;
                 match pat {
                     Pat::Constructor { ctor: ident, args } => {
                         let ctor = rho.find_ctor(&ident).ok_or(format!(
@@ -467,29 +460,97 @@ fn transpile_match(
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             ))?;
-                        let then_abs = args.iter().rfold(transpile_expr(*expr, &rho.with_vars(&HashSet::from_iter(args.clone()))?)?, |inner, arg| {
-                            Abs { var: arg.clone(), expr: box inner }
-                        });
-                        Ok((
-                            Mat {
-                                expr: box coq_expr.clone(),
-                                ctor: ident,
-                                then: box then_abs,
-                                els: box els_branch,
-                            },
-                            matched_ctors.union(&hashset! {ctor}).cloned().collect()
-                        ))
+                        Ok(matched_ctors.union(&hashset! {ctor}).cloned().collect())
                     }
-                    Pat::Ignore => unreachable!()
+                    Pat::Ignore => Ok(matched_ctors)
                 }
             },
         )
         .and_then(|x| {
-            let matched_ctor_group = rho.find_ctor_group(&x.1).ok_or(String::from("unexpected error"))?;
-            if matched_ctor_group.len() > x.1.len() {
-                Err(format!("Match must be exhaustive. Missing ctors: {}", matched_ctor_group.difference(&x.1).map(|x| x.to_string()).collect::<Vec<_>>().join(", ")))
+            let matched_ctor_group = rho.find_ctor_group(&x).ok_or(String::from("unexpected error"))?;
+            if matched_ctor_group.len() > x.len() {
+                Ok((false, matched_ctor_group, x))
             } else {
-                Ok(x.0)
+                Ok((true, matched_ctor_group, x))
+            }
+        })?;
+
+    let coq_expr = transpile_expr(*expr, rho)?;
+    let last_branch = branches.last().ok_or("Empty match.")?;
+    let branches_len = branches.len();
+    if let Pat::Constructor { ctor: _, args } = last_branch.pat.clone() {
+        if args.len() > 0 {
+            for (i, branch) in branches[..branches_len - 1].iter().enumerate() {
+                if let Pat::Constructor { ctor: _, args } = branch.pat.clone() {
+                    if args.len() == 0 {
+                        branches.swap(i, branches_len - 1);
+                        break;
+                    }
+                }
+            }
+        }
+    };
+    let last_branch = branches.last().ok_or("Empty match.")?;
+    let is_last_branch_wild = if let Pat::Ignore = last_branch.pat {
+        true
+    } else {
+        false
+    };
+
+    let (wild_branch, truncate_branch) = if is_last_branch_wild {
+        Ok((transpile_expr(*last_branch.expr.clone(), rho)?, true))
+    } else if is_exhaustive {
+        if let Pat::Constructor { ctor: _, args } = last_branch.pat.clone() {
+            if args.len() == 0 {
+                Ok((
+                    transpile_expr(
+                        *last_branch.expr.clone(),
+                        &rho.with_vars(&HashSet::from_iter(args.clone()))?,
+                    )?,
+                    true,
+                ))
+            } else {
+                Ok((Const(String::from("UNREACHABLE")), false))
+            }
+        } else {
+            Err(String::from("unexpected error."))
+        }
+    } else {
+        Err(format!(
+            "Match must be exhaustive. Missing ctors: {}",
+            matched_ctor_group
+                .difference(&current_ctors)
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }?;
+
+    if truncate_branch {
+        branches.truncate(branches.len() - 1);
+    };
+
+    branches
+        .into_iter()
+        .try_rfold(wild_branch, |els_branch, branch| {
+            let MatchBranch { pat, expr } = *branch;
+            match pat {
+                Pat::Constructor { ctor: ident, args } => {
+                    let then_abs = args.iter().rfold(
+                        transpile_expr(*expr, &rho.with_vars(&HashSet::from_iter(args.clone()))?)?,
+                        |inner, arg| Abs {
+                            var: arg.clone(),
+                            expr: box inner,
+                        },
+                    );
+                    Ok(Mat {
+                        expr: box coq_expr.clone(),
+                        ctor: ident,
+                        then: box then_abs,
+                        els: box els_branch,
+                    })
+                }
+                Pat::Ignore => unreachable!(),
             }
         })
 }

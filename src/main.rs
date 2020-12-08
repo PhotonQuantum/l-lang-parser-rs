@@ -1,4 +1,4 @@
-#![feature(iterator_fold_self, box_syntax)]
+#![feature(iterator_fold_self, box_syntax, box_patterns)]
 #[macro_use]
 extern crate maplit;
 #[macro_use]
