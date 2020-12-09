@@ -171,9 +171,8 @@ fn transpile_string_literal(string_literal: &str) -> Result<CoqExpr, String> {
             } else {
                 let mut byte = b[0];
                 let mut bits: VecDeque<bool> = VecDeque::new();
-                byte /= 2;
                 for _ in 0..8 {
-                    bits.push_front(byte % 2 == 0);
+                    bits.push_front(!byte % 2 == 0);
                     byte /= 2;
                 }
                 let mut ascii_expr: VecDeque<Box<CoqExpr>> = bits
@@ -185,6 +184,7 @@ fn transpile_string_literal(string_literal: &str) -> Result<CoqExpr, String> {
                             Const(String::from("false"))
                         }
                     })
+                    .rev()
                     .collect();
                 ascii_expr.push_front(box Const(String::from("Ascii")));
                 Ok(App(Vec::<Box<CoqExpr>>::from(ascii_expr)))
@@ -193,6 +193,7 @@ fn transpile_string_literal(string_literal: &str) -> Result<CoqExpr, String> {
         .collect::<Result<Vec<CoqExpr>, String>>()?;
     Ok(coq_chars
         .into_iter()
+        .rev()
         .fold(Const(String::from("EmptyString")), |prec, expr| {
             App(vec![
                 box App(vec![box Const(String::from("String")), box expr]),
