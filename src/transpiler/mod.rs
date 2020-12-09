@@ -103,10 +103,7 @@ fn transpile_expr(expr: Expr, rho: &Rho, config: Config) -> Result<CoqExpr, Stri
                             expr: success,
                         },
                         box MatchBranch {
-                            pat: Pat::Constructor {
-                                ctor: String::from("false"),
-                                args: vec![],
-                            },
+                            pat: Pat::Ignore,
                             expr: fail,
                         },
                     ],
