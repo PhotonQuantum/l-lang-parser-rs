@@ -78,11 +78,11 @@ impl Display for CoqExpr {
             } => {
                 write!(
                     f,
-                    "(mat {} \"{}\" {} {})",
-                    expr.to_string(),
-                    ctor,
-                    then.to_string(),
-                    els.to_string()
+                    "(mat \n{}\n{}\n{}\n{}\n)",
+                    indent(&expr.to_string()),
+                    indent(&format!("\"{}\"", ctor)),
+                    indent(&then.to_string()),
+                    indent(&els.to_string())
                 )
             }
             Abs { var, expr } => {
