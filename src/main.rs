@@ -18,7 +18,8 @@ use which::which;
 use crate::parser::parse;
 use crate::printer::Mode::{Export, Run};
 use crate::printer::{check_main, generate_coq_code};
-use crate::transpiler::{transpile, CoqProgram};
+use crate::transpiler::transpile;
+use crate::transpiler::CoqProgram;
 
 mod parser;
 mod printer;

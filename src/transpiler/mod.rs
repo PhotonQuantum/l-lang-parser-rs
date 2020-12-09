@@ -1,253 +1,17 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt;
-use std::fmt::{Display, Formatter};
 use std::iter::FromIterator;
 
 use crate::parser::*;
 
-use self::CoqExpr::*;
-use self::CoqStmt::*;
+pub use self::ast::CoqExpr::*;
+pub use self::ast::CoqStmt::*;
+pub use self::ast::*;
+use self::symbol::{Rho, Symbol};
+use self::utils::indent;
 
-#[derive(PartialEq, Debug, Copy, Clone)]
-enum Symbol {
-    Const,
-    Var,
-    Func,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct Rho {
-    symbols: HashMap<String, Symbol>,
-    ctors: Vec<HashSet<CtorDef>>,
-}
-
-impl Rho {
-    fn with_vars(&self, vars: &HashSet<String>) -> Result<Rho, String> {
-        let var_symbols: HashMap<String, Symbol> =
-            vars.iter().map(|var| (var.clone(), Symbol::Var)).collect();
-        self.with(&var_symbols, true)
-    }
-
-    fn with_funcs(&self, funcs: &HashSet<String>) -> Result<Rho, String> {
-        let func_symbols: HashMap<String, Symbol> = funcs
-            .iter()
-            .map(|var| (var.clone(), Symbol::Func))
-            .collect();
-        self.with(&func_symbols, false)
-    }
-
-    fn with(
-        &self,
-        symbols: &HashMap<String, Symbol>,
-        allow_overwrite: bool,
-    ) -> Result<Rho, String> {
-        if !allow_overwrite {
-            let self_symbol_set: HashSet<_> = HashSet::from_iter(self.symbols.keys());
-            let other_symbol_set: HashSet<_> = HashSet::from_iter(symbols.keys());
-            if !self_symbol_set.is_disjoint(&other_symbol_set) {
-                return Err(format!(
-                    "conflict symbol(s): [{}]",
-                    other_symbol_set
-                        .into_iter()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-        }
-
-        Ok(Rho {
-            symbols: self
-                .symbols
-                .clone()
-                .into_iter()
-                .chain(symbols.clone())
-                .collect(),
-            ctors: self.ctors.clone(),
-        })
-    }
-
-    fn find_symbol(&self, ident: &str) -> Option<Symbol> {
-        self.symbols.get(ident).copied()
-    }
-
-    fn find_ctor_group(&self, ctors: &HashSet<CtorDef>) -> Option<HashSet<CtorDef>> {
-        self.ctors
-            .iter()
-            .filter(|group| group.is_superset(ctors))
-            .next()
-            .cloned()
-    }
-
-    fn find_ctor(&self, ident: &str) -> Option<CtorDef> {
-        self.ctors
-            .iter()
-            .filter_map(|group| group.into_iter().filter(|ctor| ctor.ident == ident).next())
-            .next()
-            .cloned()
-    }
-
-    fn list_funcs(&self) -> impl Iterator<Item = String> + '_ {
-        self.symbols
-            .iter()
-            .filter(|x| x.1 == &Symbol::Func)
-            .map(|x| x.0.clone())
-    }
-    fn list_vars(&self) -> impl Iterator<Item = String> + '_ {
-        self.symbols
-            .iter()
-            .filter(|x| x.1 == &Symbol::Var)
-            .map(|x| x.0.clone())
-    }
-    fn list_consts(&self) -> impl Iterator<Item = String> + '_ {
-        self.symbols
-            .iter()
-            .filter(|x| x.1 == &Symbol::Const)
-            .map(|x| x.0.clone())
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct CoqProgram {
-    pub stmts: Vec<CoqStmt>,
-}
-
-impl Display for CoqProgram {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let output = self
-            .stmts
-            .iter()
-            .map(|x| x.to_string())
-            .fold_first(|x, y| format!("{}\n{}", x, y))
-            .unwrap();
-        write!(f, "{}", output)
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub enum CoqStmt {
-    Definition { name: String, expr: Box<CoqExpr> },
-}
-
-impl Display for CoqStmt {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CoqStmt::Definition { name, expr } => write!(
-                f,
-                "Definition {}: tm :=\n{}.\n",
-                name,
-                indent(&expr.to_string())
-            ),
-        }
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub enum CoqExpr {
-    App(Vec<Box<CoqExpr>>),
-    Mat {
-        expr: Box<CoqExpr>,
-        ctor: String,
-        then: Box<CoqExpr>,
-        els: Box<CoqExpr>,
-    },
-    Abs {
-        var: String,
-        expr: Box<CoqExpr>,
-    },
-    Rec(Box<CoqExpr>),
-    Const(String),
-    Var(String),
-    CoqObj(String),
-}
-
-impl Display for CoqExpr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            App(exprs) => {
-                let expr_strs: Vec<String> = exprs.iter().map(|e| e.to_string()).collect();
-                let output = expr_strs
-                    .into_iter()
-                    .fold_first(|x, y| format!("(app {} {})", x, y))
-                    .unwrap();
-                write!(f, "{}", output)
-            }
-            Mat {
-                expr,
-                ctor,
-                then,
-                els,
-            } => {
-                write!(
-                    f,
-                    "(mat {} \"{}\" {} {})",
-                    expr.to_string(),
-                    ctor,
-                    then.to_string(),
-                    els.to_string()
-                )
-            }
-            Abs { var, expr } => {
-                write!(
-                    f,
-                    "(abs \"{}\"\n{}\n)",
-                    var,
-                    indent(expr.to_string().as_str())
-                )
-            }
-            Rec(expr) => {
-                write!(f, "(rec {})", expr.to_string().as_str())
-            }
-            Const(s) => write!(f, "(const \"{}\")", s),
-            Var(s) => write!(f, "(var \"{}\")", s),
-            CoqObj(s) => write!(f, "{}", s),
-        }
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct CoqPat {
-    pub ctor: String,
-    pub args: Vec<String>,
-}
-
-impl Display for CoqPat {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let arg_strs: Vec<String> = self.args.iter().map(|e| e.to_string()).collect();
-        let arg_output = arg_strs
-            .into_iter()
-            .map(|x| format!("\"{}\"", x))
-            .fold_first(|x, y| format!("{}; {}", x, y))
-            .unwrap_or(String::from(""));
-        write!(f, "\"{}\", [{}]", self.ctor, arg_output)
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct CoqMatchBranch {
-    pub pat: CoqPat,
-    pub expr: Box<CoqExpr>,
-}
-
-impl Display for CoqMatchBranch {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "({}, \n{})",
-            self.pat,
-            indent(self.expr.to_string().as_str())
-        )
-    }
-}
-
-fn indent(input_str: &str) -> String {
-    input_str
-        .lines()
-        .into_iter()
-        .map(|x| format!("  {}", x))
-        .fold_first(|x, y| format!("{}\n{}", x, y))
-        .unwrap_or(String::new())
-}
+pub(crate) mod ast;
+mod symbol;
+mod utils;
 
 pub fn transpile(input_program: Program) -> Result<CoqProgram, String> {
     Ok(CoqProgram {
@@ -312,7 +76,11 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
             fail,
         } => {
             if let Err(e) = ensure_ctors(vec![("true", 0), ("false", 0)], rho) {
-                return Err(format!("If statement is not available when there's no bool ctors.\nConsider adding:\n{}", e));
+                return Err(format!(
+                    "If statement is not available when there's no bool ctors.\n\
+                Consider adding:\n{}",
+                    e
+                ));
             };
             transpile_expr(
                 Expr::Mat {
@@ -356,10 +124,15 @@ fn transpile_expr(expr: Expr, rho: &Rho) -> Result<CoqExpr, String> {
         }
         Expr::StringLiteral(string_literal) => {
             if let Err(e) = ensure_ctors(vec![("Ascii", 8)], rho) {
-                return Err(format!("String literal is not available when there's no Ascii ctors.\nConsider adding:\n{}", e));
+                return Err(format!(
+                    "String literal is not available when there's no Ascii ctors.\n\
+                Consider adding:\n{}",
+                    e
+                ));
             }
             if let Err(e) = ensure_ctors(vec![("String", 1), ("EmptyString", 0)], rho) {
-                return Err(format!("String literal is not available when there's no String or EmptyString ctors.\nConsider adding:\n{}", e));
+                return Err(format!("String literal is not available when there's no String or EmptyString ctors.\n\
+                Consider adding:\n{}", e));
             }
             transpile_string_literal(&string_literal)?
         }
@@ -443,7 +216,8 @@ fn transpile_match(
                                 ))
                             }
                         } else { Ok(()) }?;
-                        rho.find_ctor_group(&matched_ctors.union(&hashset! {ctor.clone()}).cloned().collect())
+                        let new_ctors = matched_ctors.union(&hashset! {ctor.clone()}).cloned().collect();
+                        rho.find_ctor_group(&new_ctors)
                             .ok_or(format!(
                                 "Invalid set of consts.\nExpected: a subset of one of {{\n{}\n}}\nGot: [{}]",
                                 indent(&rho.ctors.iter().map(|group| group
@@ -467,7 +241,8 @@ fn transpile_match(
             },
         )
         .and_then(|x| {
-            let matched_ctor_group = rho.find_ctor_group(&x).ok_or(String::from("unexpected error"))?;
+            let matched_ctor_group = rho.find_ctor_group(&x)
+                .ok_or(String::from("unexpected error"))?;
             if matched_ctor_group.len() > x.len() {
                 Ok((false, matched_ctor_group, x))
             } else {
