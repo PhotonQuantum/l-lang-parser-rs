@@ -18,8 +18,7 @@ use which::which;
 use crate::parser::parse;
 use crate::printer::Mode::{Export, Run};
 use crate::printer::{check_main, generate_coq_code};
-use crate::transpiler::transpile;
-use crate::transpiler::CoqProgram;
+use crate::transpiler::{transpile, Config, CoqProgram};
 
 mod parser;
 mod printer;
@@ -77,14 +76,27 @@ fn main() {
                         .takes_value(true),
                 ),
         )
+        .arg(Arg::with_name("no-strict").long("no-strict").help(
+            "Skip symbol and match branch checks. May generate code with degraded performance.",
+        ))
+        .arg(
+            Arg::with_name("no-optimization")
+                .long("no-optimization")
+                .help("Disable optimization."),
+        )
         .get_matches();
+
+    let config = Config {
+        optimize: !matches.is_present("no-optimization"),
+        strict: !matches.is_present("no-strict"),
+    };
 
     if let Some(matches) = matches.subcommand_matches("run") {
         let mut file = File::open(matches.value_of("INPUT").unwrap()).unwrap_or_else(|_| {
             eprintln!("File not found");
             exit(1)
         });
-        let hir = transpile_from_file(&mut file).unwrap_or_else(|e| {
+        let hir = transpile_from_file(&mut file, config).unwrap_or_else(|e| {
             eprintln!("{}", e);
             exit(1)
         });
@@ -127,7 +139,7 @@ fn main() {
             eprintln!("File not found");
             exit(1)
         });
-        let hir = transpile_from_file(&mut file).unwrap_or_else(|e| {
+        let hir = transpile_from_file(&mut file, config).unwrap_or_else(|e| {
             eprintln!("{}", e);
             exit(1)
         });
@@ -137,7 +149,7 @@ fn main() {
                 &hir,
                 Export {
                     base: matches.is_present("interpreter")
-                }
+                },
             )
         )
     }
@@ -159,8 +171,8 @@ fn execute(
             &ast,
             Run {
                 with_steps,
-                step_limit
-            }
+                step_limit,
+            },
         )
     )?;
     coq_file.flush()?;
@@ -181,12 +193,12 @@ fn execute(
         })
 }
 
-fn transpile_from_file(file: &mut File) -> Result<CoqProgram, String> {
+fn transpile_from_file(file: &mut File, config: Config) -> Result<CoqProgram, String> {
     let mut buffer = String::new();
     file.read_to_string(&mut buffer).unwrap();
     match parse(&buffer) {
         Err(err) => Err(err.to_string()),
-        Ok(ast) => match transpile(ast) {
+        Ok(ast) => match transpile(ast, config) {
             Err(err) => Err(err),
             Ok(transpiled_code) => Ok(transpiled_code),
         },
